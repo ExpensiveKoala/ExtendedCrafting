@@ -9,12 +9,15 @@ import com.blakebr0.extendedcrafting.client.screen.button.ToggleTableRunningButt
 import com.blakebr0.extendedcrafting.container.BasicAutoTableContainer;
 import com.blakebr0.extendedcrafting.lib.ModTooltips;
 import com.blakebr0.extendedcrafting.tileentity.AutoTableTileEntity;
+import com.blakebr0.extendedcrafting.util.SavedRecipe;
 import com.google.common.collect.Lists;
 import com.mojang.blaze3d.matrix.MatrixStack;
 import net.minecraft.client.world.ClientWorld;
 import net.minecraft.entity.player.PlayerInventory;
 import net.minecraft.item.ItemStack;
+import net.minecraft.item.crafting.Ingredient;
 import net.minecraft.tileentity.TileEntity;
+import net.minecraft.util.NonNullList;
 import net.minecraft.util.ResourceLocation;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.text.ITextComponent;
@@ -67,25 +70,29 @@ public class BasicAutoTableScreen extends BaseContainerScreen<BasicAutoTableCont
 
 		for (RecipeSelectButton button : this.recipeSelectButtons) {
 			if (button.isHovered()) {
-				BaseItemStackHandler recipe = this.getRecipeInfo(button.getIndex());
+				SavedRecipe recipe = this.getRecipeInfo(button.getIndex());
+				List<ITextComponent> tooltip;
+
 				if (recipe != null) {
-					List<ITextComponent> tooltip;
-					boolean hasRecipe = !recipe.getStacks().stream().allMatch(ItemStack::isEmpty);
-					if (hasRecipe) {
-						ItemStack output = recipe.getStackInSlot(recipe.getSlots() - 1);
+					if (recipe.isInvalid()) {
+						// TODO: show invalid recipe info
+						tooltip = Lists.newArrayList();
+					} else {
+						ItemStack output = recipe.getRecipe().getRecipeOutput();
 						tooltip = Lists.newArrayList(
 								new StringTextComponent(output.getCount() + "x " + output.getDisplayName().getString()),
 								new StringTextComponent(""),
 								ModTooltips.AUTO_TABLE_DELETE_RECIPE.color(TextFormatting.WHITE).build()
 						);
-					} else {
-						tooltip = Lists.newArrayList(
-								ModTooltips.AUTO_TABLE_SAVE_RECIPE.color(TextFormatting.WHITE).build()
-						);
 					}
 
-					this.func_243308_b(stack, tooltip, mouseX, mouseY);
+				} else {
+					tooltip = Lists.newArrayList(
+							ModTooltips.AUTO_TABLE_SAVE_RECIPE.color(TextFormatting.WHITE).build()
+					);
 				}
+
+				this.func_243308_b(stack, tooltip, mouseX, mouseY);
 			}
 		}
 	}
@@ -113,17 +120,19 @@ public class BasicAutoTableScreen extends BaseContainerScreen<BasicAutoTableCont
 			this.blit(stack, x + 129, y + 58, 194, 0, 13, i2);
 		}
 
-		BaseItemStackHandler recipe = this.getSelectedRecipe();
-		if (recipe != null) {
+		SavedRecipe recipe = this.getSelectedRecipe();
+		if (recipe != null && !recipe.isInvalid()) {
+			NonNullList<Ingredient> ingredients = recipe.getRecipe().getIngredients();
+
 			for (int i = 0; i < 3; i++) {
 				for (int j = 0; j < 3; j++) {
 					int index = (i * 3) + j;
-					ItemStack item = recipe.getStackInSlot(index);
+					ItemStack item = ingredients.get(index).getMatchingStacks()[0];
 					GhostItemRenderer.renderItemIntoGui(item, x + 33 + (j * 18), y + 30 + (i * 18), this.itemRenderer);
 				}
 			}
 
-			ItemStack output = recipe.getStackInSlot(recipe.getSlots() - 1);
+			ItemStack output = recipe.getRecipe().getRecipeOutput();
 			GhostItemRenderer.renderItemIntoGui(output, x + 129, y + 34, this.itemRenderer);
 		}
 	}
@@ -153,14 +162,14 @@ public class BasicAutoTableScreen extends BaseContainerScreen<BasicAutoTableCont
 		return this.tile.isRunning();
 	}
 
-	private BaseItemStackHandler getRecipeInfo(int selected) {
+	private SavedRecipe getRecipeInfo(int selected) {
 		if (this.tile == null)
 			return null;
 
-		return this.tile.getRecipeStorage().getRecipe(selected);
+		return this.tile.getRecipeStorage().getRecipeAt(selected);
 	}
 
-	private BaseItemStackHandler getSelectedRecipe() {
+	private SavedRecipe getSelectedRecipe() {
 		if (this.tile == null)
 			return null;
 

@@ -36,7 +36,7 @@ public class SaveRecipeMessage {
                 TileEntity tile = world.getTileEntity(message.pos);
                 if (tile instanceof AutoTableTileEntity) {
                     AutoTableTileEntity table = (AutoTableTileEntity) tile;
-                    if (!table.getRecipeStorage().hasRecipe(message.selected)) {
+                    if (!table.getRecipeStorage().hasRecipeAt(message.selected)) {
                         table.saveRecipe(message.selected);
                     } else {
                         table.deleteRecipe(message.selected);

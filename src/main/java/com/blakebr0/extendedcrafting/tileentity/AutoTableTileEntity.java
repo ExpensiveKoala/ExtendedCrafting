@@ -13,7 +13,8 @@ import com.blakebr0.extendedcrafting.container.BasicAutoTableContainer;
 import com.blakebr0.extendedcrafting.container.EliteAutoTableContainer;
 import com.blakebr0.extendedcrafting.container.UltimateAutoTableContainer;
 import com.blakebr0.extendedcrafting.container.inventory.ExtendedCraftingInventory;
-import com.blakebr0.extendedcrafting.crafting.TableRecipeStorage;
+import com.blakebr0.extendedcrafting.util.SavedRecipe;
+import com.blakebr0.extendedcrafting.util.TableRecipeStorage;
 import com.blakebr0.extendedcrafting.init.ModTileEntities;
 import net.minecraft.block.BlockState;
 import net.minecraft.entity.player.PlayerEntity;
@@ -25,6 +26,7 @@ import net.minecraft.inventory.container.INamedContainerProvider;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.crafting.ICraftingRecipe;
 import net.minecraft.item.crafting.IRecipeType;
+import net.minecraft.item.crafting.Ingredient;
 import net.minecraft.nbt.CompoundNBT;
 import net.minecraft.tileentity.ITickableTileEntity;
 import net.minecraft.tileentity.TileEntity;
@@ -37,6 +39,7 @@ import net.minecraft.world.World;
 import net.minecraftforge.common.capabilities.Capability;
 import net.minecraftforge.common.util.LazyOptional;
 import net.minecraftforge.energy.CapabilityEnergy;
+import net.minecraftforge.energy.IEnergyStorage;
 import net.minecraftforge.items.CapabilityItemHandler;
 import net.minecraftforge.items.IItemHandler;
 
@@ -44,13 +47,7 @@ import java.util.function.BiFunction;
 import java.util.function.Function;
 
 public abstract class AutoTableTileEntity extends BaseInventoryTileEntity implements ITickableTileEntity, INamedContainerProvider {
-    private static final Container EMPTY_CONTAINER = new Container(null, -1) {
-        @Override
-        public boolean canInteractWith(PlayerEntity player) {
-            return false;
-        }
-    };
-
+    private final LazyOptional<IEnergyStorage> energyCapability = LazyOptional.of(this::getEnergy);
     private WrappedRecipe recipe;
     private int progress;
     private boolean running = true;
@@ -97,7 +94,7 @@ public abstract class AutoTableTileEntity extends BaseInventoryTileEntity implem
                     this.recipe = recipe != null ? new WrappedRecipe(recipe) : null;
 
                     if (this.recipe == null && ModConfigs.TABLE_USE_VANILLA_RECIPES.get() && this instanceof Basic) {
-                        ExtendedCraftingInventory craftingInventory = new ExtendedCraftingInventory(EMPTY_CONTAINER, this.getRecipeInventory(), 3);
+                        ExtendedCraftingInventory craftingInventory = new ExtendedCraftingInventory(this.getRecipeInventory(), 3);
                         ICraftingRecipe vanilla = world.getRecipeManager().getRecipe(IRecipeType.CRAFTING, craftingInventory, world).orElse(null);
 
                         this.recipe = vanilla != null ? new WrappedRecipe(vanilla, craftingInventory) : null;
@@ -176,7 +173,7 @@ public abstract class AutoTableTileEntity extends BaseInventoryTileEntity implem
     @Override
     public <T> LazyOptional<T> getCapability(Capability<T> cap, Direction side) {
         if (!this.isRemoved() && cap == CapabilityEnergy.ENERGY) {
-            return CapabilityEnergy.ENERGY.orEmpty(cap, LazyOptional.of(this::getEnergy));
+            return CapabilityEnergy.ENERGY.orEmpty(cap, this.energyCapability);
         }
 
         return super.getCapability(cap, side);
@@ -208,33 +205,22 @@ public abstract class AutoTableTileEntity extends BaseInventoryTileEntity implem
         this.updateRecipeInventory();
 
         BaseItemStackHandler recipeInventory = this.getRecipeInventory();
-        IInventory recipeIInventory = recipeInventory.toIInventory();
-        BaseItemStackHandler newRecipeInventory = new BaseItemStackHandler(recipeInventory.getSlots());
 
-        for (int i = 0; i < recipeInventory.getSlots(); i++) {
-            newRecipeInventory.setStackInSlot(i, recipeInventory.getStackInSlot(i).copy());
-        }
-
-        ItemStack result = ItemStack.EMPTY;
-
-        ITableRecipe recipe = world.getRecipeManager().getRecipe(RecipeTypes.TABLE, recipeIInventory, world).orElse(null);
+        ITableRecipe recipe = world.getRecipeManager().getRecipe(RecipeTypes.TABLE, recipeInventory.toIInventory(), world).orElse(null);
         if (recipe != null) {
-            result = recipe.getCraftingResult(recipeIInventory);
+            this.getRecipeStorage().setRecipeAt(index, recipe);
         } else {
-            ExtendedCraftingInventory craftingInventory = new ExtendedCraftingInventory(EMPTY_CONTAINER, recipeInventory, 3);
-            ICraftingRecipe vanilla = world.getRecipeManager().getRecipe(IRecipeType.CRAFTING, craftingInventory, world).orElse(null);
-
-            if (vanilla != null) {
-                result = vanilla.getCraftingResult(craftingInventory);
-            }
+            ExtendedCraftingInventory craftingInventory = new ExtendedCraftingInventory(recipeInventory, 3);
+            world.getRecipeManager().getRecipe(IRecipeType.CRAFTING, craftingInventory, world).ifPresent(vanilla -> {
+                this.getRecipeStorage().setRecipeAt(index, vanilla);
+            });
         }
 
-        this.getRecipeStorage().setRecipe(index, newRecipeInventory, result);
         this.markDirtyAndDispatch();
     }
 
     public void deleteRecipe(int index) {
-        this.getRecipeStorage().unsetRecipe(index);
+        this.getRecipeStorage().removeRecipeAt(index);
         this.markDirtyAndDispatch();
     }
 
@@ -296,14 +282,14 @@ public abstract class AutoTableTileEntity extends BaseInventoryTileEntity implem
     private boolean tryInsertItemIntoGrid(ItemStack input) {
         BaseItemStackHandler inventory = this.getInventory();
         ItemStack stackToPut = ItemStack.EMPTY;
-        BaseItemStackHandler recipe = this.getRecipeStorage().getSelectedRecipe();
+        SavedRecipe<?, ?> recipe = this.getRecipeStorage().getSelectedRecipe();
         int slotToPut = -1;
 
         for (int i = 0; i < inventory.getSlots(); i++) {
             ItemStack slot = inventory.getStackInSlot(i);
-            ItemStack recipeStack = recipe.getStackInSlot(i);
+            Ingredient ingredient = recipe.getRecipe().getIngredients().get(i);
 
-            if (((slot.isEmpty() || StackHelper.areStacksEqual(input, slot)) && StackHelper.areStacksEqual(input, recipeStack))) {
+            if ((slot.isEmpty() || StackHelper.areStacksEqual(input, slot)) && ingredient.test(input)) {
                 if (slot.isEmpty() || slot.getCount() < slot.getMaxStackSize()) {
                     if (slot.isEmpty()) {
                         slotToPut = i;
@@ -362,7 +348,7 @@ public abstract class AutoTableTileEntity extends BaseInventoryTileEntity implem
             super(ModTileEntities.BASIC_AUTO_TABLE.get());
             this.inventory = new BaseItemStackHandler(10, this::markDirtyAndDispatch);
             this.recipeInventory = new BaseItemStackHandler(9);
-            this.recipeStorage = new TableRecipeStorage(10);
+            this.recipeStorage = new TableRecipeStorage();
             this.energy = new BaseEnergyStorage(ModConfigs.AUTO_TABLE_POWER_CAPACITY.get());
 
             this.inventory.setOutputSlots(9);
@@ -415,7 +401,7 @@ public abstract class AutoTableTileEntity extends BaseInventoryTileEntity implem
             super(ModTileEntities.ADVANCED_AUTO_TABLE.get());
             this.inventory = new BaseItemStackHandler(26, this::markDirtyAndDispatch);
             this.recipeInventory = new BaseItemStackHandler(25);
-            this.recipeStorage = new TableRecipeStorage(26);
+            this.recipeStorage = new TableRecipeStorage();
             this.energy = new BaseEnergyStorage(ModConfigs.AUTO_TABLE_POWER_CAPACITY.get() * 2);
 
             this.inventory.setOutputSlots(25);
@@ -468,7 +454,7 @@ public abstract class AutoTableTileEntity extends BaseInventoryTileEntity implem
             super(ModTileEntities.ELITE_AUTO_TABLE.get());
             this.inventory = new BaseItemStackHandler(50, this::markDirtyAndDispatch);
             this.recipeInventory = new BaseItemStackHandler(49);
-            this.recipeStorage = new TableRecipeStorage(50);
+            this.recipeStorage = new TableRecipeStorage();
             this.energy = new BaseEnergyStorage(ModConfigs.AUTO_TABLE_POWER_CAPACITY.get() * 4);
 
             this.inventory.setOutputSlots(49);
@@ -521,7 +507,7 @@ public abstract class AutoTableTileEntity extends BaseInventoryTileEntity implem
             super(ModTileEntities.ULTIMATE_AUTO_TABLE.get());
             this.inventory = new BaseItemStackHandler(82, this::markDirtyAndDispatch);
             this.recipeInventory = new BaseItemStackHandler(81);
-            this.recipeStorage = new TableRecipeStorage(82);
+            this.recipeStorage = new TableRecipeStorage();
             this.energy = new BaseEnergyStorage(ModConfigs.AUTO_TABLE_POWER_CAPACITY.get() * 8);
 
             this.inventory.setOutputSlots(81);

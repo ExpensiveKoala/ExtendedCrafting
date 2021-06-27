@@ -7,9 +7,20 @@ import net.minecraft.inventory.container.Container;
 import net.minecraft.item.ItemStack;
 
 public class ExtendedCraftingInventory extends CraftingInventory {
+    private static final Container EMPTY_CONTAINER = new Container(null, -1) {
+        @Override
+        public boolean canInteractWith(PlayerEntity player) {
+            return false;
+        }
+    };
+
     private final Container container;
     private final BaseItemStackHandler inventory;
     private final boolean autoTable;
+
+    public ExtendedCraftingInventory(BaseItemStackHandler inventory, int size) {
+        this(EMPTY_CONTAINER, inventory, size);
+    }
 
     public ExtendedCraftingInventory(Container container, BaseItemStackHandler inventory, int size) {
         this(container, inventory, size, false);
